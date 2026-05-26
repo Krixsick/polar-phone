@@ -1,0 +1,15 @@
+[project]
+name = "polar-phone"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic>=0.104.1",
+    "asyncpg>=0.31.0",
+    "fastapi[standard]>=0.136.3",
+    "psycopg2-binary>=2.9.12",
+    "psycopg[binary]>=3.3.4",
+    "python-dotenv>=1.2.2",
+    "twilio>=9.10.9",
+]
