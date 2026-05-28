@@ -67,6 +67,24 @@ def generate_reply(user_message: str, count: int) -> str:
     )
     return response.content[0].text
 
+@app.post("/ping")
+async def ping_me(request: Request):
+    """Make the bot send you a message. Call this manually."""
+    body = await request.json()
+    message_text = body.get("text", "yo, what's up")
+    to_number = body.get("to", os.environ.get("PHONE_NUMBER"))
+
+    if not to_number:
+        return {"error": "no phone number"}
+
+    telnyx.Message.create(
+        from_=os.environ["TELNYX_NUMBER"],
+        to=to_number,
+        text=message_text,
+    )
+
+    return {"ok": True, "sent_to": to_number}
+
 
 @app.get("/counts")
 async def show_counts():
