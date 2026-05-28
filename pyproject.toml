@@ -11,5 +11,5 @@ dependencies = [
     "psycopg2-binary>=2.9.12",
     "psycopg[binary]>=3.3.4",
     "python-dotenv>=1.2.2",
-    "twilio>=9.10.9",
+    "telnyx>=4.143.0",
 ]
