@@ -8,7 +8,7 @@ MY_PHONE_NUMBER = os.environ["PHONE_NUMBER"]
 
 CLAUDE_API = os.environ["ANTHROPIC_API_KEY"]
 
-NEON_API = os.environ["NEON_API"]
+NEON_API = os.environ.get("NEON_API") 
 
 COACH_MODEL = "claude-haiku-4-5"
 EXTRACTOR_MODEL = "claude-haiku-4-5"
