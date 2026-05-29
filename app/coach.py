@@ -89,3 +89,7 @@ async def ping_me(request: Request):
 @app.get("/counts")
 async def show_counts():
     return dict(counters)
+
+@app.get("/")
+async def health_check():
+    return {"status": "ok"}
