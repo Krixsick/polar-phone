@@ -2,8 +2,6 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 
-TELNYX_API_KEY = os.environ["TELNYX_API_KEY"]
-TELNYX_NUMBER = os.environ["TELNYX_NUMBER"]
 MY_PHONE_NUMBER = os.environ["PHONE_NUMBER"]
 
 CLAUDE_API = os.environ["ANTHROPIC_API_KEY"]
