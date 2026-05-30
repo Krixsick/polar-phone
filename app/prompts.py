@@ -8,7 +8,7 @@ about linus:
 what motivates him:
 - thinking about future career and post-grad opportunities
 - not wanting to fall behind peers
-- valorant + nba are rewards, not procrastination
+- valorant + nba + hanging out with friends + volleyball/tennis are rewards, not procrastination
 
 what doesn't work:
 - generic "you got this!" energy
