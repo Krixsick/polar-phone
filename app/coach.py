@@ -15,7 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
-
+from app.db import TIMEZONE, db
 
 load_dotenv()
 
@@ -55,12 +55,18 @@ Helper functions
 """
 
 def generate_reply(user_text: str) -> str:
-    """Ask Claude for a reply to the user's message."""
+    task_text = db.tasks_as_text()
+
+    system = COACH_PROMPT
+
+    if task_text:
+        system = f"{COACH_PROMPT}\n\ntoday's tasks:\n{task_text}"
+
     reply = claude.messages.create(
         model=COACH_MODEL,
         max_tokens=MAX_TOKENS,
-        system=COACH_PROMPT,                             
-        messages=[                                        
+        system=system,
+        messages=[
             {"role": "user", "content": user_text},
         ],
     )
@@ -76,19 +82,44 @@ def send_telegram(chat_id: int | str, text: str) -> dict:
     response.raise_for_status()
     return response.json()
 
-def morning_message():
-    morning_reply = claude.messages.create(
+def morning_message() -> str:
+    """Generate today's task list and return a short morning text to send."""
+    now = datetime.now(TIMEZONE)
+    today = now.strftime("%A %Y-%m-%d")
+    day_of_week = now.strftime("%A")
+
+    user_context = f"""
+        today is {today}
+        day of week: {day_of_week}
+
+        linus's default cadence:
+        - weekdays: leetcode, review coding notes, reading/writing, exercise, do hobbies (coding, blender, writing, sports)
+        - tuesday/thursday: add system design
+        - weekends: learning new stuff, exercise, reading/writing, do hobbies (coding, blender, writing, sports)
+
+        no special context was provided today, so make a reasonable default plan.
+        return only valid JSON.
+        """
+
+    reply = claude.messages.create(
         model=COACH_MODEL,
         max_tokens=MAX_TOKENS,
-        system=COACH_PROMPT,
+        system=MORNING_PROMPT,
         messages=[
-            {"role": "user", "content": MORNING_PROMPT}
+            {"role": "user", "content": user_context}
         ],
     )
 
-    morning_text = morning_reply.content[0].text
+    raw_text = reply.content[0].text
+    print("RAW MORNING REPLY:", raw_text)
 
-    send_telegram(MY_TELEGRAM_ID, morning_text)
+    try:
+        data = json.loads(raw_text)
+        db.set_today_tasks(data["tasks"])
+        return data["message"]
+    except (json.JSONDecodeError, KeyError) as e:
+        print("Failed to parse morning JSON:", e)
+        return raw_text
 
 @app.post("/telegram")
 async def send_message(request: Request):
@@ -107,8 +138,14 @@ async def send_message(request: Request):
 
 @app.post("/test-morning")
 async def test_morning():
-    morning_message()
-    return {"ok": True}
+    morning_text = morning_message()
+    send_telegram(MY_TELEGRAM_ID, morning_text)
+
+    return {
+        "ok": True,
+        "message": morning_text,
+        "tasks": db.get_today()
+    }
 
     
     
