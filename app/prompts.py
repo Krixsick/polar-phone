@@ -132,7 +132,7 @@ good examples of morning messages:
 good examples of tasks:
 - "30 min leetcode (1 medium or 2 easies)"
 - "1 hour blender — start that scene you talked about"
-- "system design: read 1 chapter of DDIA or a primer on caching"
+- "system design: review system design notes or learn something new"
 - "gym - upper body 45 min"
 - "review coding notes from this week, 20 min"
 - "read 20 pages of [whatever he's reading], or write a journal entry"

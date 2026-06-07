@@ -8,17 +8,47 @@ import httpx
 from fastapi import FastAPI, Request
 from anthropic import Anthropic
 from dotenv import load_dotenv
-from configs import CLAUDE_API, COACH_MODEL, MAX_TOKENS
-from prompts import COACH_PROMPT, EXTRACTOR_PROMPT, USER_PROFILE, MORNING_PROMPT
+from app.configs import CLAUDE_API, COACH_MODEL, MAX_TOKENS
+from app.prompts import COACH_PROMPT, EXTRACTOR_PROMPT, USER_PROFILE, MORNING_PROMPT
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo
+
 
 load_dotenv()
+
+
+scheduler = AsyncIOScheduler(timezone=ZoneInfo("America/Toronto"))
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 MY_TELEGRAM_ID = os.environ.get("MY_TELEGRAM_ID")  # for proactive messages
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler.add_job(
+        morning_message,
+        CronTrigger(
+            hour=7,
+            minute=0,
+            timezone=ZoneInfo("America/Toronto"),
+        ),
+        id="morning_message",
+        replace_existing=True,
+    )
+
+    scheduler.start()
+
+    yield
+
+    scheduler.shutdown()
+    
+
 claude = Anthropic()
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 """
 Helper functions
@@ -46,6 +76,19 @@ def send_telegram(chat_id: int | str, text: str) -> dict:
     response.raise_for_status()
     return response.json()
 
+def morning_message():
+    morning_reply = claude.messages.create(
+        model=COACH_MODEL,
+        max_tokens=MAX_TOKENS,
+        system=COACH_PROMPT,
+        messages=[
+            {"role": "user", "content": MORNING_PROMPT}
+        ],
+    )
+
+    morning_text = morning_reply.content[0].text
+
+    send_telegram(MY_TELEGRAM_ID, morning_text)
 
 @app.post("/telegram")
 async def send_message(request: Request):
@@ -61,6 +104,13 @@ async def send_message(request: Request):
     
     send_telegram(chat_id, reply_text)
     return {"ok": True}
+
+@app.post("/test-morning")
+async def test_morning():
+    morning_message()
+    return {"ok": True}
+
+    
     
 @app.get("/")
 async def health():
