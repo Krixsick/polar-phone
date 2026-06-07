@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 import os
 load_dotenv()
+MY_TELEGRAM_ID = os.environ["MY_TELEGRAM_ID"]
 
 MY_PHONE_NUMBER = os.environ["PHONE_NUMBER"]
 
