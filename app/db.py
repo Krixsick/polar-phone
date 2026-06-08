@@ -1,209 +1,161 @@
-"""
-Simple local task storage for the Telegram coach bot.
-
-This stores today's tasks in a tasks.json file in the project root:
-
-polar-phone/
-├── app/
-│   ├── coach.py
-│   └── db.py
-└── tasks.json
-"""
-
 import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 
-TIMEZONE = ZoneInfo("America/Toronto")
+class JsonTaskStore:
+    def __init__(
+        self,
+        file_path: Path | None = None,
+        timezone: str = "America/Toronto",
+    ):
+        self.timezone = ZoneInfo(timezone)
 
-# Saves tasks.json in the project root, one folder above /app
-TASKS_FILE = Path(__file__).resolve().parent.parent / "tasks.json"
+        if file_path is None:
+            self.file_path = Path(__file__).resolve().parent.parent / "tasks.json"
+        else:
+            self.file_path = file_path
 
+    def _today(self) -> str:
+        return datetime.now(self.timezone).strftime("%Y-%m-%d")
 
-def _today() -> str:
-    """Return today's date like '2026-06-07'."""
-    return datetime.now(TIMEZONE).strftime("%Y-%m-%d")
+    def _now(self) -> str:
+        return datetime.now(self.timezone).isoformat()
 
+    def _default_data(self) -> dict:
+        return {
+            "date": self._today(),
+            "tasks": [],
+        }
 
-def _now() -> str:
-    """Return current timestamp as a string."""
-    return datetime.now(TIMEZONE).isoformat()
+    def _load(self) -> dict:
+        if not self.file_path.exists():
+            return self._default_data()
 
+        try:
+            data = json.loads(self.file_path.read_text())
 
-def _default_data() -> dict:
-    """Default empty database shape."""
-    return {
-        "date": _today(),
-        "tasks": []
-    }
+            if "date" not in data:
+                data["date"] = self._today()
 
+            if "tasks" not in data:
+                data["tasks"] = []
 
-def _load() -> dict:
-    """Load tasks.json. If missing or broken, return empty data."""
-    if not TASKS_FILE.exists():
-        return _default_data()
+            return data
 
-    try:
-        data = json.loads(TASKS_FILE.read_text())
+        except json.JSONDecodeError:
+            return self._default_data()
 
-        if "date" not in data:
-            data["date"] = _today()
+    def _save(self, data: dict) -> None:
+        self.file_path.write_text(json.dumps(data, indent=2))
 
-        if "tasks" not in data:
-            data["tasks"] = []
+    def get_today(self) -> list[dict]:
+        data = self._load()
 
-        return data
+        if data["date"] != self._today():
+            return []
 
-    except json.JSONDecodeError:
-        return _default_data()
+        return data["tasks"]
 
+    def has_today_tasks(self) -> bool:
+        return len(self.get_today()) > 0
 
-def _save(data: dict) -> None:
-    """Save data to tasks.json."""
-    TASKS_FILE.write_text(json.dumps(data, indent=2))
+    def set_today_tasks(self, task_texts: list[str]) -> list[dict]:
+        tasks = []
 
+        for text in task_texts:
+            tasks.append({
+                "text": text,
+                "done": False,
+                "created_at": self._now(),
+                "completed_at": None,
+            })
 
-def get_today() -> list[dict]:
-    """
-    Return today's tasks.
+        data = {
+            "date": self._today(),
+            "tasks": tasks,
+        }
 
-    If the saved tasks are from a previous day, return an empty list.
-    """
-    data = _load()
+        self._save(data)
+        return tasks
 
-    if data["date"] != _today():
-        return []
+    def add_task(self, text: str) -> dict:
+        data = self._load()
 
-    return data["tasks"]
+        if data["date"] != self._today():
+            data = self._default_data()
 
-
-def has_today_tasks() -> bool:
-    """Return True if there are tasks for today."""
-    return len(get_today()) > 0
-
-
-def set_today_tasks(task_texts: list[str]) -> list[dict]:
-    """
-    Replace today's tasks with a fresh list.
-
-    Example input:
-    ["30 min leetcode", "gym - upper body", "read 20 pages"]
-    """
-    tasks = []
-
-    for text in task_texts:
-        tasks.append({
+        task = {
             "text": text,
             "done": False,
-            "created_at": _now(),
-            "completed_at": None
-        })
+            "created_at": self._now(),
+            "completed_at": None,
+        }
 
-    data = {
-        "date": _today(),
-        "tasks": tasks
-    }
+        data["tasks"].append(task)
+        self._save(data)
 
-    _save(data)
-    return tasks
+        return task
 
+    def mark_done(self, index: int) -> bool:
+        data = self._load()
 
-def add_task(text: str) -> dict:
-    """Add one task to today's list."""
-    data = _load()
+        if data["date"] != self._today():
+            return False
 
-    if data["date"] != _today():
-        data = _default_data()
+        tasks = data["tasks"]
 
-    task = {
-        "text": text,
-        "done": False,
-        "created_at": _now(),
-        "completed_at": None
-    }
+        if index < 0 or index >= len(tasks):
+            return False
 
-    data["tasks"].append(task)
-    _save(data)
+        tasks[index]["done"] = True
+        tasks[index]["completed_at"] = self._now()
 
-    return task
+        self._save(data)
+        return True
 
+    def mark_undone(self, index: int) -> bool:
+        data = self._load()
 
-def mark_done(index: int) -> bool:
-    """
-    Mark one task as done by its index.
+        if data["date"] != self._today():
+            return False
 
-    Returns True if it worked, False if the index was invalid.
-    """
-    data = _load()
+        tasks = data["tasks"]
 
-    if data["date"] != _today():
-        return False
+        if index < 0 or index >= len(tasks):
+            return False
 
-    tasks = data["tasks"]
+        tasks[index]["done"] = False
+        tasks[index]["completed_at"] = None
 
-    if index < 0 or index >= len(tasks):
-        return False
+        self._save(data)
+        return True
 
-    tasks[index]["done"] = True
-    tasks[index]["completed_at"] = _now()
+    def tasks_as_text(self) -> str:
+        tasks = self.get_today()
 
-    _save(data)
-    return True
+        lines = []
 
+        for index, task in enumerate(tasks):
+            box = "x" if task["done"] else " "
+            lines.append(f"{index}. [{box}] {task['text']}")
 
-def mark_undone(index: int) -> bool:
-    """Mark one task as not done."""
-    data = _load()
+        return "\n".join(lines)
 
-    if data["date"] != _today():
-        return False
+    def get_progress_summary(self) -> str:
+        tasks = self.get_today()
 
-    tasks = data["tasks"]
+        if not tasks:
+            return "no tasks for today yet"
 
-    if index < 0 or index >= len(tasks):
-        return False
+        done_count = sum(1 for task in tasks if task["done"])
+        total_count = len(tasks)
 
-    tasks[index]["done"] = False
-    tasks[index]["completed_at"] = None
+        return f"{done_count}/{total_count} tasks done"
 
-    _save(data)
-    return True
+    def clear_today(self) -> None:
+        self._save(self._default_data())
 
 
-def tasks_as_text() -> str:
-    """
-    Return today's tasks as readable text for Claude.
-
-    Example:
-    0. [ ] 30 min leetcode
-    1. [x] gym - upper body
-    """
-    tasks = get_today()
-
-    lines = []
-
-    for index, task in enumerate(tasks):
-        box = "x" if task["done"] else " "
-        lines.append(f"{index}. [{box}] {task['text']}")
-
-    return "\n".join(lines)
-
-
-def get_progress_summary() -> str:
-    """Return a simple progress summary like '2/5 tasks done'."""
-    tasks = get_today()
-
-    if not tasks:
-        return "no tasks for today yet"
-
-    done_count = sum(1 for task in tasks if task["done"])
-    total_count = len(tasks)
-
-    return f"{done_count}/{total_count} tasks done"
-
-
-def clear_today() -> None:
-    """Delete today's task list."""
-    _save(_default_data())
+task_store = JsonTaskStore()

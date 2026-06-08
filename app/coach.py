@@ -15,7 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
-from app.db import TIMEZONE, db
+from app.db import task_store
 
 load_dotenv()
 
@@ -55,7 +55,7 @@ Helper functions
 """
 
 def generate_reply(user_text: str) -> str:
-    task_text = db.tasks_as_text()
+    task_text = task_store.tasks_as_text()
 
     system = COACH_PROMPT
 
@@ -84,7 +84,7 @@ def send_telegram(chat_id: int | str, text: str) -> dict:
 
 def morning_message() -> str:
     """Generate today's task list and return a short morning text to send."""
-    now = datetime.now(TIMEZONE)
+    now = datetime.now(task_store.timezone)
     today = now.strftime("%A %Y-%m-%d")
     day_of_week = now.strftime("%A")
 
@@ -98,8 +98,9 @@ def morning_message() -> str:
         - weekends: learning new stuff, exercise, reading/writing, do hobbies (coding, blender, writing, sports)
 
         no special context was provided today, so make a reasonable default plan.
-        return only valid JSON.
+        
         """
+        #return only valid JSON. -> removed from prompt for now
 
     reply = claude.messages.create(
         model=COACH_MODEL,
@@ -115,7 +116,7 @@ def morning_message() -> str:
 
     try:
         data = json.loads(raw_text)
-        db.set_today_tasks(data["tasks"])
+        task_store.set_today_tasks(data["tasks"])
         return data["message"]
     except (json.JSONDecodeError, KeyError) as e:
         print("Failed to parse morning JSON:", e)
@@ -144,7 +145,7 @@ async def test_morning():
     return {
         "ok": True,
         "message": morning_text,
-        "tasks": db.get_today()
+        "tasks": task_store.get_today()
     }
 
     
