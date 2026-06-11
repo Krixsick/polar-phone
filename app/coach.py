@@ -73,23 +73,6 @@ def generate_reply(user_text: str) -> str:
         messages=[
             {"role": "user", "content": user_text},
         ],
-        output_config={
-        "format": {
-            "type": "json_schema",
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "message": {"type": "string"},
-                    "tasks": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                },
-                "required": ["message", "tasks"],
-                "additionalProperties": False,
-            },
-        }
-    },
     )
     return reply.content[0].text
 
