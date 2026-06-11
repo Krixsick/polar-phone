@@ -56,8 +56,9 @@ Helper functions
 
 def generate_reply(user_text: str) -> str:
     task_text = task_store.tasks_as_text()
-
-    system = COACH_PROMPT
+    now = datetime.now(task_store.timezone)
+    
+    system = f"""COACH_PROMPT current time: {now.strftime("%A %Y-%m-%d %I:%M %p")}"""
 
     if task_text:
         system = f"{COACH_PROMPT}\n\ntoday's tasks:\n{task_text}"
@@ -69,6 +70,23 @@ def generate_reply(user_text: str) -> str:
         messages=[
             {"role": "user", "content": user_text},
         ],
+        output_config={
+        "format": {
+            "type": "json_schema",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string"},
+                    "tasks": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["message", "tasks"],
+                "additionalProperties": False,
+            },
+        }
+    },
     )
     return reply.content[0].text
 
@@ -100,7 +118,6 @@ def morning_message() -> str:
         no special context was provided today, so make a reasonable default plan.
         
         """
-        #return only valid JSON. -> removed from prompt for now
 
     reply = claude.messages.create(
         model=COACH_MODEL,
@@ -110,18 +127,32 @@ def morning_message() -> str:
             {"role": "user", "content": user_context}
         ],
     )
+    
+    raw_text = reply.content[0].text.strip()
+    json_text = raw_text
+    if json_text.startswith("```"):
+        lines = json_text.splitlines()
 
-    raw_text = reply.content[0].text
-    print("RAW MORNING REPLY:", raw_text)
+        # remove opening line, like ```json
+        lines = lines[1:]
+        print(lines)
+
+        # remove closing line, like ```
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        print(lines)
+        json_text = "\n".join(lines).strip()
 
     try:
-        data = json.loads(raw_text)
+        data = json.loads(json_text)
+        print("PARSED MORNING DATA:", data, flush=True)
+
         task_store.set_today_tasks(data["tasks"])
         return data["message"]
+
     except (json.JSONDecodeError, KeyError) as e:
-        print("Failed to parse morning JSON:", e)
+        print("Failed to parse morning JSON:", e, flush=True)
         return raw_text
-    
 def send_morning_message():
     morning_text = morning_message()
     send_telegram(MY_TELEGRAM_ID, morning_text)
