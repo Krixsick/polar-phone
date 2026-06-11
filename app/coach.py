@@ -30,7 +30,7 @@ MY_TELEGRAM_ID = os.environ.get("MY_TELEGRAM_ID")  # for proactive messages
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler.add_job(
-        morning_message,
+        send_morning_message,
         CronTrigger(
             hour=7,
             minute=0,
@@ -121,22 +121,28 @@ def morning_message() -> str:
     except (json.JSONDecodeError, KeyError) as e:
         print("Failed to parse morning JSON:", e)
         return raw_text
+    
+def send_morning_message():
+    morning_text = morning_message()
+    send_telegram(MY_TELEGRAM_ID, morning_text)
 
 @app.post("/telegram")
 async def send_message(request: Request):
-    #Reading user's input
     user_message = await request.json()
-    if not user_message["message"] or "text" not in user_message["message"]:
+
+    message = user_message.get("message")
+    if not message or "text" not in message:
         return {"ok": True}
-    
-    chat_id = user_message["message"]["chat"]["id"]
-    
-    incoming_text = user_message["message"]["text"]
+
+    chat_id = message["chat"]["id"]
+    incoming_text = message["text"]
+
     reply_text = generate_reply(incoming_text)
-    
     send_telegram(chat_id, reply_text)
+
     return {"ok": True}
 
+#used to test out our morning function
 @app.post("/test-morning")
 async def test_morning():
     morning_text = morning_message()
