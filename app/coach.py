@@ -58,10 +58,13 @@ def generate_reply(user_text: str) -> str:
     task_text = task_store.tasks_as_text()
     now = datetime.now(task_store.timezone)
     
-    system = f"""COACH_PROMPT current time: {now.strftime("%A %Y-%m-%d %I:%M %p")}"""
+    system = f"""{COACH_PROMPT}
 
-    if task_text:
-        system = f"{COACH_PROMPT}\n\ntoday's tasks:\n{task_text}"
+    current time: {now.strftime("%A %Y-%m-%d %I:%M %p")}
+
+    today's tasks:
+    {task_text if task_text else "no saved tasks for today"}
+    """
 
     reply = claude.messages.create(
         model=COACH_MODEL,
@@ -70,23 +73,6 @@ def generate_reply(user_text: str) -> str:
         messages=[
             {"role": "user", "content": user_text},
         ],
-        output_config={
-        "format": {
-            "type": "json_schema",
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "message": {"type": "string"},
-                    "tasks": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                },
-                "required": ["message", "tasks"],
-                "additionalProperties": False,
-            },
-        }
-    },
     )
     return reply.content[0].text
 
