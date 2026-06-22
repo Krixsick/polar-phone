@@ -8,8 +8,12 @@ import httpx
 from fastapi import FastAPI, Request
 from anthropic import Anthropic
 from dotenv import load_dotenv
-from app.configs import CLAUDE_API, COACH_MODEL, MAX_TOKENS
+from app.configs import CLAUDE_API, COACH_MODEL, EXTRACTOR_MODEL, MAX_TOKENS
 from app.prompts import COACH_PROMPT, EXTRACTOR_PROMPT, USER_PROFILE, MORNING_PROMPT
+from app.task_completion import (
+    build_completion_extraction_message,
+    parse_completed_task_index,
+)
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -75,6 +79,38 @@ def generate_reply(user_text: str) -> str:
         ],
     )
     return reply.content[0].text
+
+def extract_completed_task_index(user_text: str) -> int | None:
+    tasks = task_store.get_today()
+    if not tasks:
+        return None
+
+    task_text = task_store.tasks_as_text()
+    reply = claude.messages.create(
+        model=EXTRACTOR_MODEL,
+        max_tokens=10,
+        system=EXTRACTOR_PROMPT,
+        messages=[
+            {
+                "role": "user",
+                "content": build_completion_extraction_message(task_text, user_text),
+            },
+        ],
+    )
+
+    raw_result = reply.content[0].text
+    return parse_completed_task_index(raw_result, len(tasks))
+
+def mark_completed_task_from_message(user_text: str) -> int | None:
+    completed_index = extract_completed_task_index(user_text)
+
+    if completed_index is None:
+        return None
+
+    if not task_store.mark_done(completed_index):
+        return None
+
+    return completed_index
 
 def send_telegram(chat_id: int | str, text: str) -> dict:
     """POST to Telegram's /sendMessage endpoint."""
@@ -154,6 +190,7 @@ async def send_message(request: Request):
     chat_id = message["chat"]["id"]
     incoming_text = message["text"]
 
+    mark_completed_task_from_message(incoming_text)
     reply_text = generate_reply(incoming_text)
     send_telegram(chat_id, reply_text)
 
@@ -177,4 +214,3 @@ async def test_morning():
 async def health():
     """Railway health check."""
     return {"status": "ok"}
-
