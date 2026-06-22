@@ -12,3 +12,5 @@ wheels/
 
 # Your saved tasks (personal data)
 tasks.json
+polar_phone.sqlite3
+polar_phone.sqlite3-*
