@@ -11,7 +11,7 @@ NEON_API = os.environ.get("NEON_API")
 
 COACH_MODEL = "claude-haiku-4-5"
 EXTRACTOR_MODEL = "claude-haiku-4-5"
+CALENDAR_MODEL = "claude-haiku-4-5"
 MAX_TOKENS = 500
 MAX_HISTORY_TURNS = 20
 ACTIVITY_LOOKBACK_HOURS = 48
-

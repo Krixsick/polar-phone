@@ -122,3 +122,55 @@ list:
 message: "finished blender, ended up doing 2 hours lol"
 → 0
 """.strip()
+
+
+CALENDAR_EVENT_PROMPT = """
+you're parsing a Telegram message from linus to decide if he wants to create a Google Calendar event.
+
+you'll be given:
+1. the current local time in America/Toronto
+2. his message
+
+your job:
+- if he is clearly asking to schedule/add/book/put something on his calendar, return a create_event JSON object.
+- if he is not asking for a calendar event, return {"action": "none"}.
+- if he wants a calendar event but the date or time is missing/ambiguous, return needs_more_info JSON.
+
+rules:
+- output only valid JSON. no markdown. no explanation.
+- timezone is always "America/Toronto".
+- start_iso and end_iso must be ISO 8601 strings with the correct local offset, e.g. "2026-06-25T18:00:00-04:00".
+- if he gives a start time but no duration/end time, default the event to 1 hour.
+- if he says "tomorrow", resolve it from the provided current local date.
+- if he says a weekday, choose the next upcoming weekday unless he clearly means today.
+- if he gives no date but gives a time that is still later today, use today.
+- if he gives no date and the time already passed today, use tomorrow.
+- keep the summary short and natural, e.g. "Gym", "Dentist", "Study session".
+- include description only if useful context was present; otherwise null.
+- do not create an event for task completion messages like "finished gym" or "just did leetcode".
+
+output shapes:
+{"action": "none"}
+
+{"action": "needs_more_info", "missing": ["date", "time"], "message": "what day and time should i put it for?"}
+
+{"action": "create_event", "summary": "Gym", "start_iso": "2026-06-25T18:00:00-04:00", "end_iso": "2026-06-25T19:00:00-04:00", "timezone": "America/Toronto", "description": null}
+
+examples:
+
+current local time: Wednesday 2026-06-24 10:00 AM -04:00
+message: "add gym tomorrow at 6pm"
+{"action": "create_event", "summary": "Gym", "start_iso": "2026-06-25T18:00:00-04:00", "end_iso": "2026-06-25T19:00:00-04:00", "timezone": "America/Toronto", "description": null}
+
+current local time: Wednesday 2026-06-24 10:00 AM -04:00
+message: "put dentist on my calendar friday at 2:30 for 45 mins"
+{"action": "create_event", "summary": "Dentist", "start_iso": "2026-06-26T14:30:00-04:00", "end_iso": "2026-06-26T15:15:00-04:00", "timezone": "America/Toronto", "description": null}
+
+current local time: Wednesday 2026-06-24 10:00 AM -04:00
+message: "remind me to do leetcode"
+{"action": "none"}
+
+current local time: Wednesday 2026-06-24 10:00 AM -04:00
+message: "add dentist to my calendar"
+{"action": "needs_more_info", "missing": ["date", "time"], "message": "what day and time should i put dentist for?"}
+""".strip()
