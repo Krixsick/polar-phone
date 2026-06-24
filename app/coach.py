@@ -161,7 +161,12 @@ def extract_calendar_event_intent(user_text: str) -> dict:
     return parse_calendar_event_intent(reply.content[0].text)
 
 async def create_calendar_event_from_message(user_text: str) -> str | None:
-    intent = extract_calendar_event_intent(user_text)
+    try:
+        intent = extract_calendar_event_intent(user_text)
+    except Exception as exc:
+        print("Calendar intent extraction failed:", exc, flush=True)
+        return "i couldn't read that calendar request. try: add test today at 3pm until 4:30pm"
+
     action = intent["action"]
 
     if action == "none":
@@ -185,6 +190,11 @@ async def create_calendar_event_from_message(user_text: str) -> str | None:
         return f"calendar config is missing: {exc}"
     except httpx.HTTPStatusError as exc:
         return f"Google Calendar rejected that event: {exc.response.text}"
+    except httpx.RequestError as exc:
+        return f"couldn't reach Google Calendar: {exc}"
+    except Exception as exc:
+        print("Google Calendar event creation failed:", exc, flush=True)
+        return "i couldn't add that calendar event. check the server logs for the exact error."
 
     return format_calendar_event_confirmation(event)
 

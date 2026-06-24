@@ -13,6 +13,11 @@ from app.calendar_intent import (
 class CalendarIntentTests(unittest.TestCase):
     def test_looks_like_calendar_request(self):
         self.assertTrue(looks_like_calendar_request("add gym tomorrow at 6pm"))
+        self.assertTrue(
+            looks_like_calendar_request(
+                "Can you add a Google Calendar event at 3pm today named test that goes until 4:30pm"
+            )
+        )
         self.assertTrue(looks_like_calendar_request("book dentist friday"))
         self.assertTrue(looks_like_calendar_request("put this on my calendar"))
         self.assertFalse(looks_like_calendar_request("finished gym"))
