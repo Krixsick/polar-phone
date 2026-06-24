@@ -25,6 +25,7 @@ from app.configs import (
 from app.google_calendar import (
     GoogleCalendarAuthError,
     GoogleCalendarConfigError,
+    build_google_auth_route_url,
     build_google_authorization_url,
     create_google_calendar_event,
     exchange_google_code_for_tokens,
@@ -179,7 +180,7 @@ async def create_calendar_event_from_message(user_text: str) -> str | None:
             description=intent["description"],
         )
     except GoogleCalendarAuthError:
-        return "connect Google Calendar first: /google/auth"
+        return f"connect Google Calendar first: {build_google_auth_route_url()}"
     except GoogleCalendarConfigError as exc:
         return f"calendar config is missing: {exc}"
     except httpx.HTTPStatusError as exc:
@@ -280,7 +281,13 @@ async def send_message(request: Request):
 async def google_auth():
     state = make_google_oauth_state()
     task_store.save_oauth_state("google", state)
-    return RedirectResponse(build_google_authorization_url(state))
+
+    try:
+        authorization_url = build_google_authorization_url(state)
+    except GoogleCalendarConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RedirectResponse(authorization_url)
 
 @app.get("/google/oauth2callback")
 async def google_oauth2callback(request: Request):
