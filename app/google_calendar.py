@@ -1,7 +1,7 @@
 import os
 from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from app.db import SQLiteTaskStore
 
@@ -22,18 +22,37 @@ class GoogleCalendarAuthError(RuntimeError):
     pass
 
 
-def _required_env(name: str) -> str:
+def _required_env(
+    name: str,
+    aliases: tuple[str, ...] = (),
+    default: str | None = None,
+) -> str:
     value = os.environ.get(name)
-    if not value:
-        raise GoogleCalendarConfigError(f"{name} is not set")
-    return value
+    if value:
+        return value
+
+    for alias in aliases:
+        value = os.environ.get(alias)
+        if value:
+            return value
+
+    if default is not None:
+        return default
+
+    raise GoogleCalendarConfigError(f"{name} is not set")
 
 
 def get_google_oauth_config() -> dict:
     return {
-        "client_id": _required_env("GOOGLE_CLIENT_ID"),
-        "client_secret": _required_env("GOOGLE_CLIENT_SECRET"),
-        "redirect_uri": _required_env("GOOGLE_REDIRECT_URI"),
+        "client_id": _required_env("GOOGLE_CLIENT_ID", aliases=("CLIENT_ID",)),
+        "client_secret": _required_env(
+            "GOOGLE_CLIENT_SECRET",
+            aliases=("CLIENT_SECRET",),
+        ),
+        "redirect_uri": _required_env(
+            "GOOGLE_REDIRECT_URI",
+            default="http://localhost:8000/google/oauth2callback",
+        ),
     }
 
 
@@ -57,6 +76,13 @@ def build_google_authorization_url(state: str) -> str:
     )
 
     return f"{GOOGLE_AUTHORIZATION_URL}?{query}"
+
+
+def build_google_auth_route_url() -> str:
+    redirect_uri = get_google_oauth_config()["redirect_uri"]
+    parts = urlsplit(redirect_uri)
+
+    return urlunsplit((parts.scheme, parts.netloc, "/google/auth", "", ""))
 
 
 def token_expires_at(expires_in: int) -> str:
