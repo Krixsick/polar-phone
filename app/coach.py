@@ -9,14 +9,35 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from anthropic import Anthropic
 from dotenv import load_dotenv
-from app.configs import CLAUDE_API, COACH_MODEL, EXTRACTOR_MODEL, MAX_TOKENS
+from app.calendar_intent import (
+    build_calendar_extraction_message,
+    format_calendar_event_confirmation,
+    looks_like_calendar_request,
+    parse_calendar_event_intent,
+)
+from app.configs import (
+    CALENDAR_MODEL,
+    CLAUDE_API,
+    COACH_MODEL,
+    EXTRACTOR_MODEL,
+    MAX_TOKENS,
+)
 from app.google_calendar import (
+    GoogleCalendarAuthError,
+    GoogleCalendarConfigError,
     build_google_authorization_url,
+    create_google_calendar_event,
     exchange_google_code_for_tokens,
     make_google_oauth_state,
     token_expires_at,
 )
-from app.prompts import COACH_PROMPT, EXTRACTOR_PROMPT, USER_PROFILE, MORNING_PROMPT
+from app.prompts import (
+    CALENDAR_EVENT_PROMPT,
+    COACH_PROMPT,
+    EXTRACTOR_PROMPT,
+    USER_PROFILE,
+    MORNING_PROMPT,
+)
 from app.task_completion import (
     build_completion_extraction_message,
     parse_completed_task_index,
@@ -119,6 +140,53 @@ def mark_completed_task_from_message(user_text: str) -> int | None:
 
     return completed_index
 
+def extract_calendar_event_intent(user_text: str) -> dict:
+    if not looks_like_calendar_request(user_text):
+        return {"action": "none"}
+
+    now = datetime.now(task_store.timezone)
+    reply = claude.messages.create(
+        model=CALENDAR_MODEL,
+        max_tokens=MAX_TOKENS,
+        system=CALENDAR_EVENT_PROMPT,
+        messages=[
+            {
+                "role": "user",
+                "content": build_calendar_extraction_message(user_text, now),
+            },
+        ],
+    )
+
+    return parse_calendar_event_intent(reply.content[0].text)
+
+async def create_calendar_event_from_message(user_text: str) -> str | None:
+    intent = extract_calendar_event_intent(user_text)
+    action = intent["action"]
+
+    if action == "none":
+        return None
+
+    if action == "needs_more_info":
+        return intent["message"]
+
+    try:
+        event = await create_google_calendar_event(
+            task_store,
+            summary=intent["summary"],
+            start_iso=intent["start_iso"],
+            end_iso=intent["end_iso"],
+            timezone=intent["timezone"],
+            description=intent["description"],
+        )
+    except GoogleCalendarAuthError:
+        return "connect Google Calendar first: /google/auth"
+    except GoogleCalendarConfigError as exc:
+        return f"calendar config is missing: {exc}"
+    except httpx.HTTPStatusError as exc:
+        return f"Google Calendar rejected that event: {exc.response.text}"
+
+    return format_calendar_event_confirmation(event)
+
 def send_telegram(chat_id: int | str, text: str) -> dict:
     """POST to Telegram's /sendMessage endpoint."""
     response = httpx.post(
@@ -196,6 +264,11 @@ async def send_message(request: Request):
 
     chat_id = message["chat"]["id"]
     incoming_text = message["text"]
+
+    calendar_reply = await create_calendar_event_from_message(incoming_text)
+    if calendar_reply is not None:
+        send_telegram(chat_id, calendar_reply)
+        return {"ok": True}
 
     mark_completed_task_from_message(incoming_text)
     reply_text = generate_reply(incoming_text)
