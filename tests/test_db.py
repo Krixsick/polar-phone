@@ -54,6 +54,39 @@ class SQLiteTaskStoreTests(unittest.TestCase):
             self.assertTrue(store.get_tasks_for_date(today)[0]["done"])
             self.assertFalse(store.get_tasks_for_date(tomorrow)[0]["done"])
 
+    def test_oauth_state_can_only_be_consumed_once(self):
+        with TemporaryDirectory() as tmpdir:
+            store = self.make_store(tmpdir)
+            store.save_oauth_state("google", "state-value")
+
+            self.assertTrue(store.consume_oauth_state("google", "state-value"))
+            self.assertFalse(store.consume_oauth_state("google", "state-value"))
+
+    def test_google_tokens_are_saved(self):
+        with TemporaryDirectory() as tmpdir:
+            store = self.make_store(tmpdir)
+            store.save_google_tokens(
+                {
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "scope": "calendar-scope",
+                    "token_type": "Bearer",
+                },
+                expires_at="2026-06-24T12:00:00+00:00",
+            )
+
+            self.assertEqual(
+                store.get_google_tokens(),
+                {
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "expires_at": "2026-06-24T12:00:00+00:00",
+                    "scope": "calendar-scope",
+                    "token_type": "Bearer",
+                    "updated_at": store.get_google_tokens()["updated_at"],
+                },
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -78,6 +78,24 @@ class SQLiteTaskStore:
                     value TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS oauth_states (
+                    provider TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    used_at TEXT,
+                    PRIMARY KEY (provider, state)
+                );
+
+                CREATE TABLE IF NOT EXISTS google_oauth_tokens (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    access_token TEXT NOT NULL,
+                    refresh_token TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    scope TEXT,
+                    token_type TEXT,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_tasks_date
                     ON tasks(task_date, archived_at, position);
 
@@ -86,6 +104,9 @@ class SQLiteTaskStore:
 
                 CREATE INDEX IF NOT EXISTS idx_completions_date
                     ON task_completions(completion_date);
+
+                CREATE INDEX IF NOT EXISTS idx_oauth_states_provider_state
+                    ON oauth_states(provider, state, used_at);
                 """
             )
 
@@ -407,6 +428,100 @@ class SQLiteTaskStore:
                 """,
                 (today,),
             )
+
+    def save_oauth_state(self, provider: str, state: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO oauth_states (
+                    provider,
+                    state,
+                    created_at,
+                    used_at
+                )
+                VALUES (?, ?, ?, NULL)
+                """,
+                (provider, state, self._now()),
+            )
+
+    def consume_oauth_state(self, provider: str, state: str) -> bool:
+        now = self._now()
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE oauth_states
+                SET used_at = ?
+                WHERE provider = ?
+                    AND state = ?
+                    AND used_at IS NULL
+                """,
+                (now, provider, state),
+            )
+
+        return cursor.rowcount == 1
+
+    def save_google_tokens(self, token_data: dict, expires_at: str) -> None:
+        refresh_token = token_data.get("refresh_token")
+        existing_tokens = self.get_google_tokens()
+
+        if not refresh_token and existing_tokens:
+            refresh_token = existing_tokens["refresh_token"]
+
+        if not refresh_token:
+            raise ValueError("Google OAuth response did not include a refresh token")
+
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO google_oauth_tokens (
+                    id,
+                    access_token,
+                    refresh_token,
+                    expires_at,
+                    scope,
+                    token_type,
+                    updated_at
+                )
+                VALUES (1, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    access_token = excluded.access_token,
+                    refresh_token = excluded.refresh_token,
+                    expires_at = excluded.expires_at,
+                    scope = excluded.scope,
+                    token_type = excluded.token_type,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    token_data["access_token"],
+                    refresh_token,
+                    expires_at,
+                    token_data.get("scope"),
+                    token_data.get("token_type"),
+                    self._now(),
+                ),
+            )
+
+    def get_google_tokens(self) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    access_token,
+                    refresh_token,
+                    expires_at,
+                    scope,
+                    token_type,
+                    updated_at
+                FROM google_oauth_tokens
+                WHERE id = 1
+                """
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return dict(row)
 
 
 task_store = SQLiteTaskStore()

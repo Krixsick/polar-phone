@@ -5,10 +5,17 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from app.configs import CLAUDE_API, COACH_MODEL, EXTRACTOR_MODEL, MAX_TOKENS
+from app.google_calendar import (
+    build_google_authorization_url,
+    exchange_google_code_for_tokens,
+    make_google_oauth_state,
+    token_expires_at,
+)
 from app.prompts import COACH_PROMPT, EXTRACTOR_PROMPT, USER_PROFILE, MORNING_PROMPT
 from app.task_completion import (
     build_completion_extraction_message,
@@ -195,6 +202,60 @@ async def send_message(request: Request):
     send_telegram(chat_id, reply_text)
 
     return {"ok": True}
+
+@app.get("/google/auth")
+async def google_auth():
+    state = make_google_oauth_state()
+    task_store.save_oauth_state("google", state)
+    return RedirectResponse(build_google_authorization_url(state))
+
+@app.get("/google/oauth2callback")
+async def google_oauth2callback(request: Request):
+    error = request.query_params.get("error")
+    if error:
+        raise HTTPException(status_code=400, detail=f"Google OAuth error: {error}")
+
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing OAuth code or state")
+
+    if not task_store.consume_oauth_state("google", state):
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+
+    try:
+        token_data = await exchange_google_code_for_tokens(code)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Google token exchange failed: {exc.response.text}",
+        ) from exc
+
+    task_store.save_google_tokens(
+        token_data,
+        expires_at=token_expires_at(token_data["expires_in"]),
+    )
+
+    return {
+        "ok": True,
+        "message": "Google Calendar connected. You can close this tab.",
+        "scope": token_data.get("scope"),
+    }
+
+@app.get("/google/status")
+async def google_status():
+    tokens = task_store.get_google_tokens()
+
+    if tokens is None:
+        return {"connected": False}
+
+    return {
+        "connected": True,
+        "expires_at": tokens["expires_at"],
+        "scope": tokens["scope"],
+        "token_type": tokens["token_type"],
+        "updated_at": tokens["updated_at"],
+    }
 
 #used to test out our morning function
 @app.post("/test-morning")
