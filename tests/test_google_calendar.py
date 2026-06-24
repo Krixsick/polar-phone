@@ -1,0 +1,50 @@
+import os
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
+import unittest
+
+from app.google_calendar import (
+    GOOGLE_CALENDAR_SCOPE,
+    build_google_authorization_url,
+    token_expires_at,
+    token_is_expired,
+)
+
+
+class GoogleCalendarTests(unittest.TestCase):
+    def test_build_google_authorization_url(self):
+        with patch.dict(
+            os.environ,
+            {
+                "GOOGLE_CLIENT_ID": "client-id",
+                "GOOGLE_CLIENT_SECRET": "client-secret",
+                "GOOGLE_REDIRECT_URI": "http://localhost:8000/google/oauth2callback",
+            },
+        ):
+            parsed_url = urlparse(build_google_authorization_url("state-value"))
+            params = parse_qs(parsed_url.query)
+
+        self.assertEqual(parsed_url.scheme, "https")
+        self.assertEqual(parsed_url.netloc, "accounts.google.com")
+        self.assertEqual(params["client_id"], ["client-id"])
+        self.assertEqual(
+            params["redirect_uri"],
+            ["http://localhost:8000/google/oauth2callback"],
+        )
+        self.assertEqual(params["response_type"], ["code"])
+        self.assertEqual(params["scope"], [GOOGLE_CALENDAR_SCOPE])
+        self.assertEqual(params["access_type"], ["offline"])
+        self.assertEqual(params["prompt"], ["consent"])
+        self.assertEqual(params["state"], ["state-value"])
+
+    def test_token_expiration_helpers(self):
+        expires_at = token_expires_at(3600)
+        expired_at = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+
+        self.assertFalse(token_is_expired(expires_at))
+        self.assertTrue(token_is_expired(expired_at))
+
+
+if __name__ == "__main__":
+    unittest.main()
