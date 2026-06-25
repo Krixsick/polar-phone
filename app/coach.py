@@ -160,9 +160,13 @@ def extract_calendar_event_intent(user_text: str) -> dict:
         ],
     )
 
-    return parse_calendar_event_intent(reply.content[0].text)
+    raw_result = reply.content[0].text
+    print("Calendar intent raw result:", raw_result, flush=True)
+    return parse_calendar_event_intent(raw_result)
 
 async def create_calendar_event_from_message(user_text: str) -> str | None:
+    is_calendar_request = looks_like_calendar_request(user_text)
+
     try:
         intent = extract_calendar_event_intent(user_text)
     except Exception as exc:
@@ -170,6 +174,9 @@ async def create_calendar_event_from_message(user_text: str) -> str | None:
         return "i couldn't read that calendar request. try: add test today at 3pm until 4:30pm"
 
     action = intent["action"]
+
+    if action == "none" and is_calendar_request:
+        return "i saw this as a calendar request, but couldn't parse it. try: add test today at 3pm until 4:30pm"
 
     if action == "none":
         return None
@@ -210,7 +217,7 @@ def send_telegram(chat_id: int | str, text: str) -> dict:
     response = httpx.post(
         f"{TELEGRAM_API}/sendMessage",
         json={"chat_id": chat_id, "text": text},
-        timeout=10.0,
+        timeout=4.0,
     )
     response.raise_for_status()
     return response.json()
