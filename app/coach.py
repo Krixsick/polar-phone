@@ -1,6 +1,7 @@
 import os
 import asyncio
 import json
+import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -29,6 +30,7 @@ from app.google_calendar import (
     build_google_authorization_url,
     create_google_calendar_event,
     exchange_google_code_for_tokens,
+    get_google_debug_config,
     make_google_oauth_state,
     token_expires_at,
 )
@@ -185,7 +187,12 @@ async def create_calendar_event_from_message(user_text: str) -> str | None:
             description=intent["description"],
         )
     except GoogleCalendarAuthError:
-        return f"connect Google Calendar first: {build_google_auth_route_url()}"
+        try:
+            auth_url = build_google_auth_route_url()
+        except GoogleCalendarConfigError as exc:
+            return f"Google Calendar is not connected, and config is missing: {exc}"
+
+        return f"connect Google Calendar first: {auth_url}"
     except GoogleCalendarConfigError as exc:
         return f"calendar config is missing: {exc}"
     except httpx.HTTPStatusError as exc:
@@ -267,25 +274,40 @@ def send_morning_message():
 
 @app.post("/telegram")
 async def send_message(request: Request):
-    user_message = await request.json()
+    chat_id = None
 
-    message = user_message.get("message")
-    if not message or "text" not in message:
+    try:
+        user_message = await request.json()
+
+        message = user_message.get("message")
+        if not message or "text" not in message:
+            return {"ok": True}
+
+        chat_id = message["chat"]["id"]
+        incoming_text = message["text"]
+
+        calendar_reply = await create_calendar_event_from_message(incoming_text)
+        if calendar_reply is not None:
+            send_telegram(chat_id, calendar_reply)
+            return {"ok": True}
+
+        mark_completed_task_from_message(incoming_text)
+        reply_text = generate_reply(incoming_text)
+        send_telegram(chat_id, reply_text)
+
         return {"ok": True}
 
-    chat_id = message["chat"]["id"]
-    incoming_text = message["text"]
+    except Exception as exc:
+        print("Telegram webhook failed:", exc, flush=True)
+        traceback.print_exc()
 
-    calendar_reply = await create_calendar_event_from_message(incoming_text)
-    if calendar_reply is not None:
-        send_telegram(chat_id, calendar_reply)
-        return {"ok": True}
+        if chat_id is not None:
+            try:
+                send_telegram(chat_id, "something broke on the server. check Railway logs.")
+            except Exception as send_exc:
+                print("Failed to send Telegram error message:", send_exc, flush=True)
 
-    mark_completed_task_from_message(incoming_text)
-    reply_text = generate_reply(incoming_text)
-    send_telegram(chat_id, reply_text)
-
-    return {"ok": True}
+        return {"ok": False, "error": str(exc)}
 
 @app.get("/google/auth")
 async def google_auth():
@@ -346,6 +368,13 @@ async def google_status():
         "token_type": tokens["token_type"],
         "updated_at": tokens["updated_at"],
     }
+
+@app.get("/google/debug-config")
+async def google_debug_config():
+    try:
+        return get_google_debug_config()
+    except GoogleCalendarConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 #used to test out our morning function
 @app.post("/test-morning")

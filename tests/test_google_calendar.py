@@ -6,8 +6,10 @@ import unittest
 
 from app.google_calendar import (
     GOOGLE_CALENDAR_SCOPE,
+    GoogleCalendarConfigError,
     build_google_auth_route_url,
     build_google_authorization_url,
+    get_google_debug_config,
     get_google_oauth_config,
     token_expires_at,
     token_is_expired,
@@ -71,6 +73,73 @@ class GoogleCalendarTests(unittest.TestCase):
                     "redirect_uri": "http://localhost:8000/google/oauth2callback",
                 },
             )
+
+    def test_google_config_uses_public_base_url(self):
+        with patch.dict(
+            os.environ,
+            {
+                "GOOGLE_CLIENT_ID": "client-id",
+                "GOOGLE_CLIENT_SECRET": "client-secret",
+                "PUBLIC_BASE_URL": "https://polar-phone.up.railway.app/",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                get_google_oauth_config()["redirect_uri"],
+                "https://polar-phone.up.railway.app/google/oauth2callback",
+            )
+            self.assertEqual(
+                build_google_auth_route_url(),
+                "https://polar-phone.up.railway.app/google/auth",
+            )
+            self.assertEqual(
+                get_google_debug_config()["redirect_uri"],
+                "https://polar-phone.up.railway.app/google/oauth2callback",
+            )
+
+    def test_google_config_ignores_localhost_redirect_on_railway_with_public_base_url(self):
+        with patch.dict(
+            os.environ,
+            {
+                "GOOGLE_CLIENT_ID": "client-id",
+                "GOOGLE_CLIENT_SECRET": "client-secret",
+                "GOOGLE_REDIRECT_URI": "http://localhost:8000/google/oauth2callback",
+                "PUBLIC_BASE_URL": "https://polar-phone-production.up.railway.app",
+                "RAILWAY_ENVIRONMENT": "production",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                get_google_oauth_config()["redirect_uri"],
+                "https://polar-phone-production.up.railway.app/google/oauth2callback",
+            )
+
+    def test_google_config_rejects_localhost_redirect_on_railway_without_public_base_url(self):
+        with patch.dict(
+            os.environ,
+            {
+                "GOOGLE_CLIENT_ID": "client-id",
+                "GOOGLE_CLIENT_SECRET": "client-secret",
+                "GOOGLE_REDIRECT_URI": "http://localhost:8000/google/oauth2callback",
+                "RAILWAY_ENVIRONMENT": "production",
+            },
+            clear=True,
+        ):
+            with self.assertRaises(GoogleCalendarConfigError):
+                get_google_oauth_config()
+
+    def test_google_config_requires_public_url_on_railway(self):
+        with patch.dict(
+            os.environ,
+            {
+                "GOOGLE_CLIENT_ID": "client-id",
+                "GOOGLE_CLIENT_SECRET": "client-secret",
+                "RAILWAY_ENVIRONMENT": "production",
+            },
+            clear=True,
+        ):
+            with self.assertRaises(GoogleCalendarConfigError):
+                get_google_oauth_config()
 
     def test_token_expiration_helpers(self):
         expires_at = token_expires_at(3600)

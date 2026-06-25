@@ -42,6 +42,44 @@ def _required_env(
     raise GoogleCalendarConfigError(f"{name} is not set")
 
 
+def _public_base_url() -> str | None:
+    base_url = os.environ.get("PUBLIC_BASE_URL")
+    if base_url:
+        return base_url.rstrip("/")
+
+    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    if railway_domain:
+        return f"https://{railway_domain}".rstrip("/")
+
+    return None
+
+
+def _google_redirect_uri() -> str:
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
+    base_url = _public_base_url()
+
+    if redirect_uri:
+        if os.environ.get("RAILWAY_ENVIRONMENT") and "localhost" in redirect_uri:
+            if base_url:
+                return f"{base_url}/google/oauth2callback"
+
+            raise GoogleCalendarConfigError(
+                "GOOGLE_REDIRECT_URI cannot be localhost on Railway"
+            )
+
+        return redirect_uri
+
+    if base_url:
+        return f"{base_url}/google/oauth2callback"
+
+    if os.environ.get("RAILWAY_ENVIRONMENT"):
+        raise GoogleCalendarConfigError(
+            "GOOGLE_REDIRECT_URI or PUBLIC_BASE_URL must be set on Railway"
+        )
+
+    return "http://localhost:8000/google/oauth2callback"
+
+
 def get_google_oauth_config() -> dict:
     return {
         "client_id": _required_env("GOOGLE_CLIENT_ID", aliases=("CLIENT_ID",)),
@@ -49,10 +87,7 @@ def get_google_oauth_config() -> dict:
             "GOOGLE_CLIENT_SECRET",
             aliases=("CLIENT_SECRET",),
         ),
-        "redirect_uri": _required_env(
-            "GOOGLE_REDIRECT_URI",
-            default="http://localhost:8000/google/oauth2callback",
-        ),
+        "redirect_uri": _google_redirect_uri(),
     }
 
 
@@ -83,6 +118,22 @@ def build_google_auth_route_url() -> str:
     parts = urlsplit(redirect_uri)
 
     return urlunsplit((parts.scheme, parts.netloc, "/google/auth", "", ""))
+
+
+def get_google_debug_config() -> dict:
+    config = get_google_oauth_config()
+
+    return {
+        "auth_route_url": build_google_auth_route_url(),
+        "redirect_uri": config["redirect_uri"],
+        "has_google_client_id": bool(os.environ.get("GOOGLE_CLIENT_ID")),
+        "has_client_id_alias": bool(os.environ.get("CLIENT_ID")),
+        "has_google_client_secret": bool(os.environ.get("GOOGLE_CLIENT_SECRET")),
+        "has_client_secret_alias": bool(os.environ.get("CLIENT_SECRET")),
+        "public_base_url": _public_base_url(),
+        "railway_environment": os.environ.get("RAILWAY_ENVIRONMENT"),
+        "railway_public_domain": os.environ.get("RAILWAY_PUBLIC_DOMAIN"),
+    }
 
 
 def token_expires_at(expires_in: int) -> str:
