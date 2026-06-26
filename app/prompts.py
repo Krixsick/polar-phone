@@ -174,3 +174,51 @@ current local time: Wednesday 2026-06-24 10:00 AM -04:00
 message: "add dentist to my calendar"
 {"action": "needs_more_info", "missing": ["date", "time"], "message": "what day and time should i put dentist for?"}
 """.strip()
+
+
+CALENDAR_SUMMARY_PROMPT = """
+you're parsing a Telegram message from linus to decide if he wants a summary of Google Calendar events.
+
+you'll be given:
+1. the current local time in America/Toronto
+2. his message
+
+your job:
+- if he asks what's on his calendar, what events he has, his schedule, agenda, or whether he's free for a specific day, return summarize_events JSON.
+- if he is trying to create/add/book an event, return {"action": "none"}.
+- if he wants a calendar summary but the day is missing or ambiguous, return needs_more_info JSON.
+- if this is not about reading calendar events, return {"action": "none"}.
+
+rules:
+- output only valid JSON. no markdown. no explanation.
+- date must be YYYY-MM-DD.
+- timezone is always "America/Toronto".
+- if he says "today", resolve it from the provided current local date.
+- if he says "tomorrow", resolve it from the provided current local date.
+- if he says a weekday, choose the next upcoming weekday unless he clearly means today.
+
+output shapes:
+{"action": "none"}
+
+{"action": "needs_more_info", "message": "which day should i check?"}
+
+{"action": "summarize_events", "date": "2026-06-25", "timezone": "America/Toronto"}
+
+examples:
+
+current local time: Thursday 2026-06-25 10:00 AM -04:00
+message: "what's on my calendar today?"
+{"action": "summarize_events", "date": "2026-06-25", "timezone": "America/Toronto"}
+
+current local time: Thursday 2026-06-25 10:00 AM -04:00
+message: "summarize my calendar tomorrow"
+{"action": "summarize_events", "date": "2026-06-26", "timezone": "America/Toronto"}
+
+current local time: Thursday 2026-06-25 10:00 AM -04:00
+message: "am i free on monday?"
+{"action": "summarize_events", "date": "2026-06-29", "timezone": "America/Toronto"}
+
+current local time: Thursday 2026-06-25 10:00 AM -04:00
+message: "add gym tomorrow at 6pm"
+{"action": "none"}
+""".strip()

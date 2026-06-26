@@ -12,9 +12,13 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from app.calendar_intent import (
     build_calendar_extraction_message,
+    calendar_day_range,
     format_calendar_event_confirmation,
+    format_calendar_events_summary,
     looks_like_calendar_request,
+    looks_like_calendar_summary_request,
     parse_calendar_event_intent,
+    parse_calendar_summary_intent,
 )
 from app.configs import (
     CALENDAR_MODEL,
@@ -31,11 +35,13 @@ from app.google_calendar import (
     create_google_calendar_event,
     exchange_google_code_for_tokens,
     get_google_debug_config,
+    list_google_calendar_events_for_range,
     make_google_oauth_state,
     token_expires_at,
 )
 from app.prompts import (
     CALENDAR_EVENT_PROMPT,
+    CALENDAR_SUMMARY_PROMPT,
     COACH_PROMPT,
     EXTRACTOR_PROMPT,
     USER_PROFILE,
@@ -164,6 +170,78 @@ def extract_calendar_event_intent(user_text: str) -> dict:
     print("Calendar intent raw result:", raw_result, flush=True)
     return parse_calendar_event_intent(raw_result)
 
+def extract_calendar_summary_intent(user_text: str) -> dict:
+    if not looks_like_calendar_summary_request(user_text):
+        return {"action": "none"}
+
+    now = datetime.now(task_store.timezone)
+    reply = claude.messages.create(
+        model=CALENDAR_MODEL,
+        max_tokens=MAX_TOKENS,
+        system=CALENDAR_SUMMARY_PROMPT,
+        messages=[
+            {
+                "role": "user",
+                "content": build_calendar_extraction_message(user_text, now),
+            },
+        ],
+    )
+
+    raw_result = reply.content[0].text
+    print("Calendar summary raw result:", raw_result, flush=True)
+    return parse_calendar_summary_intent(raw_result)
+
+async def summarize_calendar_from_message(user_text: str) -> str | None:
+    is_summary_request = looks_like_calendar_summary_request(user_text)
+
+    try:
+        intent = extract_calendar_summary_intent(user_text)
+    except Exception as exc:
+        print("Calendar summary extraction failed:", exc, flush=True)
+        return "i couldn't read that calendar summary request. try: what's on my calendar today?"
+
+    action = intent["action"]
+
+    if action == "none" and is_summary_request:
+        return "i saw this as a calendar summary request, but couldn't parse the day. try: what's on my calendar today?"
+
+    if action == "none":
+        return None
+
+    if action == "needs_more_info":
+        return intent["message"]
+
+    try:
+        start_iso, end_iso = calendar_day_range(intent["date"], intent["timezone"])
+        events = await list_google_calendar_events_for_range(
+            task_store,
+            start_iso=start_iso,
+            end_iso=end_iso,
+            timezone=intent["timezone"],
+        )
+    except GoogleCalendarAuthError:
+        try:
+            auth_url = build_google_auth_route_url()
+        except GoogleCalendarConfigError as exc:
+            return f"Google Calendar is not connected, and config is missing: {exc}"
+
+        return f"connect Google Calendar first: {auth_url}"
+    except GoogleCalendarConfigError as exc:
+        return f"calendar config is missing: {exc}"
+    except httpx.HTTPStatusError as exc:
+        return f"Google Calendar rejected that request: {exc.response.text}"
+    except httpx.RequestError as exc:
+        return f"couldn't reach Google Calendar: {exc}"
+    except Exception as exc:
+        print("Google Calendar event summary failed:", exc, flush=True)
+        return "i couldn't summarize your calendar. check Railway logs for the exact error."
+
+    return format_calendar_events_summary(
+        events,
+        day=intent["date"],
+        timezone=intent["timezone"],
+    )
+
 async def create_calendar_event_from_message(user_text: str) -> str | None:
     is_calendar_request = looks_like_calendar_request(user_text)
 
@@ -217,7 +295,7 @@ def send_telegram(chat_id: int | str, text: str) -> dict:
     response = httpx.post(
         f"{TELEGRAM_API}/sendMessage",
         json={"chat_id": chat_id, "text": text},
-        timeout=4.0,
+        timeout=5.0,
     )
     response.raise_for_status()
     return response.json()
@@ -292,6 +370,11 @@ async def send_message(request: Request):
 
         chat_id = message["chat"]["id"]
         incoming_text = message["text"]
+
+        calendar_summary_reply = await summarize_calendar_from_message(incoming_text)
+        if calendar_summary_reply is not None:
+            send_telegram(chat_id, calendar_summary_reply)
+            return {"ok": True}
 
         calendar_reply = await create_calendar_event_from_message(incoming_text)
         if calendar_reply is not None:

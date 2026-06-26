@@ -244,3 +244,31 @@ async def create_google_calendar_event(
 
     response.raise_for_status()
     return response.json()
+
+
+async def list_google_calendar_events_for_range(
+    store: SQLiteTaskStore,
+    start_iso: str,
+    end_iso: str,
+    timezone: str = "America/Toronto",
+    calendar_id: str = "primary",
+) -> list[dict]:
+    import httpx
+
+    access_token = await get_google_access_token(store)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            GOOGLE_CALENDAR_EVENTS_URL.format(calendar_id=calendar_id),
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={
+                "timeMin": start_iso,
+                "timeMax": end_iso,
+                "timeZone": timezone,
+                "singleEvents": "true",
+                "orderBy": "startTime",
+            },
+        )
+
+    response.raise_for_status()
+    return response.json().get("items", [])

@@ -1,5 +1,6 @@
 import json
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 
 CALENDAR_ACTION_WORDS = (
@@ -23,6 +24,17 @@ CALENDAR_TIME_WORDS = (
     "am",
     "pm",
 )
+CALENDAR_SUMMARY_WORDS = (
+    "agenda",
+    "events",
+    "free",
+    "have",
+    "on my calendar",
+    "schedule",
+    "summarize",
+    "summary",
+    "what's on",
+)
 
 
 def looks_like_calendar_request(user_text: str) -> bool:
@@ -35,6 +47,21 @@ def looks_like_calendar_request(user_text: str) -> bool:
     has_time_hint = any(word in text for word in CALENDAR_TIME_WORDS) or ":" in text
 
     return has_action and has_time_hint
+
+
+def looks_like_calendar_summary_request(user_text: str) -> bool:
+    text = user_text.lower()
+
+    has_calendar_context = (
+        "calendar" in text
+        or "schedule" in text
+        or "events" in text
+        or "agenda" in text
+    )
+    has_summary_word = any(word in text for word in CALENDAR_SUMMARY_WORDS)
+    has_day_hint = any(word in text for word in CALENDAR_TIME_WORDS)
+
+    return (has_calendar_context and has_summary_word) or ("free" in text and has_day_hint)
 
 
 def build_calendar_extraction_message(
@@ -132,6 +159,58 @@ def parse_calendar_event_intent(raw_text: str) -> dict:
     }
 
 
+def parse_calendar_summary_intent(raw_text: str) -> dict:
+    try:
+        data = json.loads(_strip_json_markdown(raw_text))
+    except json.JSONDecodeError:
+        return {"action": "none"}
+
+    if not isinstance(data, dict):
+        return {"action": "none"}
+
+    action = data.get("action")
+    if action == "none":
+        return {"action": "none"}
+
+    if action == "needs_more_info":
+        message = data.get("message")
+        if not isinstance(message, str) or not message.strip():
+            message = "which day should i check?"
+
+        return {
+            "action": "needs_more_info",
+            "message": message.strip(),
+        }
+
+    if action != "summarize_events":
+        return {"action": "none"}
+
+    day = data.get("date")
+    timezone = data.get("timezone") or "America/Toronto"
+
+    if not isinstance(day, str) or not isinstance(timezone, str):
+        return {"action": "none"}
+
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        return {"action": "none"}
+
+    return {
+        "action": "summarize_events",
+        "date": day,
+        "timezone": timezone,
+    }
+
+
+def calendar_day_range(day: str, timezone: str) -> tuple[str, str]:
+    tzinfo = ZoneInfo(timezone)
+    start = datetime.combine(date.fromisoformat(day), time.min, tzinfo=tzinfo)
+    end = start + timedelta(days=1)
+
+    return start.isoformat(), end.isoformat()
+
+
 def format_calendar_event_confirmation(event: dict) -> str:
     summary = event.get("summary") or "Event"
     start = event.get("start", {})
@@ -145,3 +224,41 @@ def format_calendar_event_confirmation(event: dict) -> str:
         return f"added {summary} to your calendar for {start_time}"
 
     return f"added {summary} to your calendar"
+
+
+def _format_event_time(value: str, timezone: str) -> str:
+    parsed = datetime.fromisoformat(value)
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo(timezone))
+    else:
+        parsed = parsed.astimezone(ZoneInfo(timezone))
+
+    return parsed.strftime("%-I:%M %p").lower()
+
+
+def format_calendar_events_summary(
+    events: list[dict],
+    day: str,
+    timezone: str = "America/Toronto",
+) -> str:
+    display_day = date.fromisoformat(day).strftime("%A %b %-d")
+
+    if not events:
+        return f"nothing on your calendar for {display_day}."
+
+    lines = [f"{display_day}:"]
+
+    for event in events:
+        title = event.get("summary") or "Untitled event"
+        start = event.get("start", {})
+        end = event.get("end", {})
+
+        if "dateTime" in start:
+            start_time = _format_event_time(start["dateTime"], timezone)
+            end_time = _format_event_time(end["dateTime"], timezone)
+            lines.append(f"- {start_time}-{end_time}: {title}")
+        else:
+            lines.append(f"- all day: {title}")
+
+    return "\n".join(lines)
