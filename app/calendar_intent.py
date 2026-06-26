@@ -35,6 +35,20 @@ CALENDAR_SUMMARY_WORDS = (
     "summary",
     "what's on",
 )
+CALENDAR_CONTEXT_WORDS = (
+    "agenda",
+    "calendar",
+    "calender",
+    "event",
+    "events",
+    "schedule",
+)
+CALENDAR_CREATION_WORDS = (
+    "add",
+    "book",
+    "create",
+    "put",
+)
 
 
 def looks_like_calendar_request(user_text: str) -> bool:
@@ -51,17 +65,25 @@ def looks_like_calendar_request(user_text: str) -> bool:
 
 def looks_like_calendar_summary_request(user_text: str) -> bool:
     text = user_text.lower()
+    words = text.split()
 
-    has_calendar_context = (
-        "calendar" in text
-        or "schedule" in text
-        or "events" in text
-        or "agenda" in text
-    )
+    if any(word in words for word in CALENDAR_CREATION_WORDS):
+        return False
+
+    has_calendar_context = any(word in text for word in CALENDAR_CONTEXT_WORDS)
     has_summary_word = any(word in text for word in CALENDAR_SUMMARY_WORDS)
     has_day_hint = any(word in text for word in CALENDAR_TIME_WORDS)
+    asks_what_have = "what do i have" in text or "what have i got" in text
+    asks_tasks_and_events = "tasks" in text and (
+        "event" in text or "calendar" in text or "calender" in text
+    )
 
-    return (has_calendar_context and has_summary_word) or ("free" in text and has_day_hint)
+    return (
+        (has_calendar_context and has_summary_word)
+        or ("free" in text and has_day_hint)
+        or (asks_what_have and has_day_hint)
+        or (asks_tasks_and_events and has_day_hint)
+    )
 
 
 def build_calendar_extraction_message(

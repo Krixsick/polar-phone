@@ -51,6 +51,11 @@ from app.task_completion import (
     build_completion_extraction_message,
     parse_completed_task_index,
 )
+from app.task_summary import (
+    format_task_summary,
+    looks_like_task_summary_request,
+    resolve_task_summary_day,
+)
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -290,6 +295,18 @@ async def create_calendar_event_from_message(user_text: str) -> str | None:
 
     return format_calendar_event_confirmation(event)
 
+def summarize_tasks_from_message(user_text: str) -> str | None:
+    if not looks_like_task_summary_request(user_text):
+        return None
+
+    now = datetime.now(task_store.timezone)
+    day = resolve_task_summary_day(user_text, now)
+    if day is None:
+        return "which day should i check tasks for?"
+
+    tasks = task_store.get_tasks_for_date(day)
+    return format_task_summary(tasks, day)
+
 def send_telegram(chat_id: int | str, text: str) -> dict:
     """POST to Telegram's /sendMessage endpoint."""
     response = httpx.post(
@@ -370,6 +387,11 @@ async def send_message(request: Request):
 
         chat_id = message["chat"]["id"]
         incoming_text = message["text"]
+
+        task_summary_reply = summarize_tasks_from_message(incoming_text)
+        if task_summary_reply is not None:
+            send_telegram(chat_id, task_summary_reply)
+            return {"ok": True}
 
         calendar_summary_reply = await summarize_calendar_from_message(incoming_text)
         if calendar_summary_reply is not None:
