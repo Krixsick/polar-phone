@@ -1,19 +1,102 @@
 import os
+import sys
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlparse
 import unittest
 
 from app.google_calendar import (
+    GOOGLE_CALENDAR_LIST_URL,
     GOOGLE_CALENDAR_SCOPE,
     GoogleCalendarConfigError,
     build_google_auth_route_url,
     build_google_authorization_url,
     get_google_debug_config,
     get_google_oauth_config,
+    list_google_calendar_events_for_visible_calendars,
     token_expires_at,
     token_is_expired,
 )
+
+
+class FakeGoogleResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+class FakeGoogleAsyncClient:
+    requests: list[dict] = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def get(self, url: str, headers: dict | None = None, params: dict | None = None):
+        self.requests.append({"url": url, "headers": headers, "params": params})
+
+        if url == GOOGLE_CALENDAR_LIST_URL:
+            return FakeGoogleResponse(
+                {
+                    "items": [
+                        {
+                            "id": "primary",
+                            "summary": "Personal",
+                            "primary": True,
+                            "selected": True,
+                        },
+                        {
+                            "id": "team@example.com",
+                            "summary": "Team",
+                            "selected": True,
+                        },
+                        {
+                            "id": "hidden@example.com",
+                            "summary": "Hidden",
+                            "selected": False,
+                        },
+                    ]
+                }
+            )
+
+        if url.endswith("/calendars/primary/events"):
+            return FakeGoogleResponse(
+                {
+                    "items": [
+                        {
+                            "summary": "Dinner",
+                            "start": {"dateTime": "2026-06-26T21:00:00-04:00"},
+                            "end": {"dateTime": "2026-06-26T22:00:00-04:00"},
+                        }
+                    ]
+                }
+            )
+
+        if url.endswith("/calendars/team%40example.com/events"):
+            return FakeGoogleResponse(
+                {
+                    "items": [
+                        {
+                            "summary": "Soccer",
+                            "start": {"dateTime": "2026-06-26T20:00:00-04:00"},
+                            "end": {"dateTime": "2026-06-26T22:00:00-04:00"},
+                        }
+                    ]
+                }
+            )
+
+        return FakeGoogleResponse({"items": []})
 
 
 class GoogleCalendarTests(unittest.TestCase):
@@ -38,6 +121,11 @@ class GoogleCalendarTests(unittest.TestCase):
         )
         self.assertEqual(params["response_type"], ["code"])
         self.assertEqual(params["scope"], [GOOGLE_CALENDAR_SCOPE])
+        self.assertIn("https://www.googleapis.com/auth/calendar.events", params["scope"][0])
+        self.assertIn(
+            "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+            params["scope"][0],
+        )
         self.assertEqual(params["access_type"], ["offline"])
         self.assertEqual(params["prompt"], ["consent"])
         self.assertEqual(params["state"], ["state-value"])
@@ -147,6 +235,38 @@ class GoogleCalendarTests(unittest.TestCase):
 
         self.assertFalse(token_is_expired(expires_at))
         self.assertTrue(token_is_expired(expired_at))
+
+
+class GoogleCalendarAsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_visible_calendar_events_reads_selected_calendars(self):
+        FakeGoogleAsyncClient.requests = []
+        fake_httpx = SimpleNamespace(
+            AsyncClient=FakeGoogleAsyncClient,
+            HTTPStatusError=Exception,
+        )
+
+        with (
+            patch("app.google_calendar.get_google_access_token", AsyncMock(return_value="token")),
+            patch.dict(sys.modules, {"httpx": fake_httpx}),
+        ):
+            events = await list_google_calendar_events_for_visible_calendars(
+                store=object(),
+                start_iso="2026-06-26T00:00:00-04:00",
+                end_iso="2026-06-27T00:00:00-04:00",
+                timezone="America/Toronto",
+            )
+
+        self.assertEqual([event["summary"] for event in events], ["Soccer", "Dinner"])
+        self.assertEqual(events[0]["_calendar_summary"], "Team")
+
+        requested_urls = [request["url"] for request in FakeGoogleAsyncClient.requests]
+        self.assertIn(GOOGLE_CALENDAR_LIST_URL, requested_urls)
+        self.assertTrue(
+            any(url.endswith("/calendars/team%40example.com/events") for url in requested_urls)
+        )
+        self.assertFalse(
+            any("hidden%40example.com" in url for url in requested_urls)
+        )
 
 
 if __name__ == "__main__":

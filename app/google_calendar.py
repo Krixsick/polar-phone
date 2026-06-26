@@ -1,17 +1,22 @@
 import os
 from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 from app.db import SQLiteTaskStore
 
 
 GOOGLE_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_CALENDAR_LIST_URL = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
 GOOGLE_CALENDAR_EVENTS_URL = (
     "https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
 )
-GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+GOOGLE_CALENDAR_SCOPES = (
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+)
+GOOGLE_CALENDAR_SCOPE = " ".join(GOOGLE_CALENDAR_SCOPES)
 
 
 class GoogleCalendarConfigError(RuntimeError):
@@ -126,6 +131,7 @@ def get_google_debug_config() -> dict:
     return {
         "auth_route_url": build_google_auth_route_url(),
         "redirect_uri": config["redirect_uri"],
+        "requested_scope": GOOGLE_CALENDAR_SCOPE,
         "has_google_client_id": bool(os.environ.get("GOOGLE_CLIENT_ID")),
         "has_client_id_alias": bool(os.environ.get("CLIENT_ID")),
         "has_google_client_secret": bool(os.environ.get("GOOGLE_CLIENT_SECRET")),
@@ -235,9 +241,11 @@ async def create_google_calendar_event(
     if description:
         event_body["description"] = description
 
+    encoded_calendar_id = quote(calendar_id, safe="")
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(
-            GOOGLE_CALENDAR_EVENTS_URL.format(calendar_id=calendar_id),
+            GOOGLE_CALENDAR_EVENTS_URL.format(calendar_id=encoded_calendar_id),
             headers={"Authorization": f"Bearer {access_token}"},
             json=event_body,
         )
@@ -256,10 +264,11 @@ async def list_google_calendar_events_for_range(
     import httpx
 
     access_token = await get_google_access_token(store)
+    encoded_calendar_id = quote(calendar_id, safe="")
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.get(
-            GOOGLE_CALENDAR_EVENTS_URL.format(calendar_id=calendar_id),
+            GOOGLE_CALENDAR_EVENTS_URL.format(calendar_id=encoded_calendar_id),
             headers={"Authorization": f"Bearer {access_token}"},
             params={
                 "timeMin": start_iso,
@@ -272,3 +281,92 @@ async def list_google_calendar_events_for_range(
 
     response.raise_for_status()
     return response.json().get("items", [])
+
+
+async def list_google_calendar_list(store: SQLiteTaskStore) -> list[dict]:
+    import httpx
+
+    access_token = await get_google_access_token(store)
+    calendars: list[dict] = []
+    page_token = None
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        while True:
+            params = {
+                "maxResults": 250,
+                "minAccessRole": "reader",
+                "showHidden": "false",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+
+            response = await client.get(
+                GOOGLE_CALENDAR_LIST_URL,
+                headers={"Authorization": f"Bearer {access_token}"},
+                params=params,
+            )
+            response.raise_for_status()
+
+            payload = response.json()
+            calendars.extend(payload.get("items", []))
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                return calendars
+
+
+def _visible_calendar_entries(calendars: list[dict]) -> list[dict]:
+    visible = [
+        calendar
+        for calendar in calendars
+        if calendar.get("primary") or calendar.get("selected")
+    ]
+
+    if visible:
+        return visible
+
+    return [{"id": "primary", "summary": "Primary", "primary": True}]
+
+
+def _event_sort_value(event: dict) -> str:
+    start = event.get("start", {})
+    return start.get("dateTime") or start.get("date") or ""
+
+
+async def list_google_calendar_events_for_visible_calendars(
+    store: SQLiteTaskStore,
+    start_iso: str,
+    end_iso: str,
+    timezone: str = "America/Toronto",
+) -> list[dict]:
+    import httpx
+
+    calendars = _visible_calendar_entries(await list_google_calendar_list(store))
+    events: list[dict] = []
+
+    for calendar in calendars:
+        calendar_id = calendar.get("id")
+        if not calendar_id:
+            continue
+
+        try:
+            calendar_events = await list_google_calendar_events_for_range(
+                store,
+                start_iso=start_iso,
+                end_iso=end_iso,
+                timezone=timezone,
+                calendar_id=calendar_id,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {403, 404}:
+                continue
+            raise
+
+        calendar_name = calendar.get("summary")
+        for event in calendar_events:
+            event["_calendar_id"] = calendar_id
+            if calendar_name:
+                event["_calendar_summary"] = calendar_name
+
+        events.extend(calendar_events)
+
+    return sorted(events, key=_event_sort_value)
