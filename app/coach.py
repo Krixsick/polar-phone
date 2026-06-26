@@ -35,7 +35,7 @@ from app.google_calendar import (
     create_google_calendar_event,
     exchange_google_code_for_tokens,
     get_google_debug_config,
-    list_google_calendar_events_for_range,
+    list_google_calendar_events_for_visible_calendars,
     make_google_oauth_state,
     token_expires_at,
 )
@@ -218,7 +218,7 @@ async def summarize_calendar_from_message(user_text: str) -> str | None:
 
     try:
         start_iso, end_iso = calendar_day_range(intent["date"], intent["timezone"])
-        events = await list_google_calendar_events_for_range(
+        events = await list_google_calendar_events_for_visible_calendars(
             task_store,
             start_iso=start_iso,
             end_iso=end_iso,
