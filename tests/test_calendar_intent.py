@@ -31,7 +31,19 @@ class CalendarIntentTests(unittest.TestCase):
         self.assertTrue(looks_like_calendar_summary_request("what's on my calendar today?"))
         self.assertTrue(looks_like_calendar_summary_request("summarize my calendar tomorrow"))
         self.assertTrue(looks_like_calendar_summary_request("am i free monday?"))
+        self.assertTrue(looks_like_calendar_summary_request("what event do i have tomorrow?"))
+        self.assertTrue(
+            looks_like_calendar_summary_request(
+                "what tasks and events do i have tomorrow?"
+            )
+        )
+        self.assertTrue(looks_like_calendar_summary_request("what do i have friday?"))
         self.assertFalse(looks_like_calendar_summary_request("add gym tomorrow at 6pm"))
+        self.assertFalse(
+            looks_like_calendar_summary_request(
+                "add a Google Calendar event at 3pm today named test"
+            )
+        )
 
     def test_build_calendar_extraction_message(self):
         current_time = datetime(
